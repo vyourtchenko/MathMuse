@@ -43,11 +43,28 @@ document.addEventListener('DOMContentLoaded', () => {
     // Current rendered shape points
     let currentWaveformPoints = [];
     
+    // Interactive Graph State
+    let viewState = {
+        xMin: -10,
+        xMax: 10,
+        yMin: -1.5,
+        yMax: 1.5,
+        isDragging: false,
+        dragStartX: 0,
+        lastMouseX: 0,
+        lastMouseY: 0,
+        dragMode: 'pan' // 'pan', 'drag-min', 'drag-max'
+    };
+    let isRedrawQueued = false;
+    
     // Constants
     const SAMPLE_RATE = 44100;
     
     // --- Initial Setup ---
     function init() {
+        resetViewState();
+        setupCanvasInteractions();
+        
         resizeCanvas();
         window.addEventListener('resize', () => {
             resizeCanvas();
@@ -62,11 +79,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         xMinInput.addEventListener('input', () => {
+            if (!viewState.isDragging) resetViewState();
             parseAndDraw();
             if (isPlaying) updateAudioLive();
         });
         
         xMaxInput.addEventListener('input', () => {
+            if (!viewState.isDragging) resetViewState();
             parseAndDraw();
             if (isPlaying) updateAudioLive();
         });
@@ -96,6 +115,14 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
             parseAndDraw();
         }, 500);
+    }
+
+    function resetViewState() {
+        const min = parseFloat(xMinInput.value) || 0;
+        const max = parseFloat(xMaxInput.value) || 10;
+        const span = max - min;
+        viewState.xMin = min - span * 0.1;
+        viewState.xMax = max + span * 0.1;
     }
 
     // --- Parser & Logic ---
@@ -134,23 +161,18 @@ document.addEventListener('DOMContentLoaded', () => {
         currentWaveformPoints = [];
         if (!compiledMath) return;
 
-        const xMin = parseFloat(xMinInput.value);
-        const xMax = parseFloat(xMaxInput.value);
+        const xMin = viewState.xMin;
+        const xMax = viewState.xMax;
         
         if (xMin >= xMax || isNaN(xMin) || isNaN(xMax)) {
-            errorMsg.textContent = "Invalid domain: xMin must be less than xMax.";
             return;
         }
 
-        // Calculate points for visual purposes (lower resolution than audio)
-        // E.g., 2000 points across the canvas width
+        // Calculate points for visual purposes
         const resolution = 2000;
         const widthRange = xMax - xMin;
         const step = widthRange / resolution;
         
-        let minY = Infinity;
-        let maxY = -Infinity;
-
         for (let i = 0; i <= resolution; i++) {
             const currentX = xMin + (i * step);
             try {
@@ -159,23 +181,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Only consider finite numbers
                 if (isFinite(y)) {
                     currentWaveformPoints.push({ x: currentX, y: y });
-                    if (y < minY) minY = y;
-                    if (y > maxY) maxY = y;
                 } else {
                      currentWaveformPoints.push({ x: currentX, y: 0 });
                 }
             } catch(e) {
                  currentWaveformPoints.push({ x: currentX, y: 0 });
             }
-        }
-        
-        // Find maximum absolute amplitude to normalize visually if needed
-        let maxAmp = Math.max(Math.abs(minY), Math.abs(maxY));
-        if (maxAmp === 0) maxAmp = 1;
-        
-        // Normalize points for drawing visually
-        for(let pt of currentWaveformPoints) {
-            pt.normalizedY = pt.y / maxAmp; // Ranges -1 to +1
         }
     }
 
@@ -194,30 +205,43 @@ document.addEventListener('DOMContentLoaded', () => {
         
         ctx.clearRect(0, 0, w, h);
         
-        // Draw baseline
+        // Draw baseline (Y=0)
+        const yZeroPixel = h - ((0 - viewState.yMin) / (viewState.yMax - viewState.yMin)) * h;
         ctx.beginPath();
-        ctx.moveTo(0, h/2);
-        ctx.lineTo(w, h/2);
+        ctx.moveTo(0, yZeroPixel);
+        ctx.lineTo(w, yZeroPixel);
         ctx.strokeStyle = 'rgba(255,255,255,0.1)';
         ctx.lineWidth = 1;
         ctx.stroke();
 
         if (currentWaveformPoints.length === 0) return;
 
-        const xMin = parseFloat(xMinInput.value);
-        const xMax = parseFloat(xMaxInput.value);
-        const domainSpan = xMax - xMin;
+        const activeXMin = parseFloat(xMinInput.value);
+        const activeXMax = parseFloat(xMaxInput.value);
+        const viewSpanX = viewState.xMax - viewState.xMin;
+        const viewSpanY = viewState.yMax - viewState.yMin;
 
+        // Draw active domains
+        const startXPixel = ((activeXMin - viewState.xMin) / viewSpanX) * w;
+        const endXPixel = ((activeXMax - viewState.xMin) / viewSpanX) * w;
+
+        // Draw shaded region for active domain behind waveform
+        ctx.fillStyle = 'rgba(99, 102, 241, 0.1)'; // primary tailwind color lightly shaded
+        const drawStartX = Math.max(0, startXPixel);
+        const drawEndX = Math.min(w, endXPixel);
+        if (drawEndX > drawStartX) {
+            ctx.fillRect(drawStartX, 0, drawEndX - drawStartX, h);
+        }
+
+        // Draw waveform
         ctx.beginPath();
         ctx.strokeStyle = '#38bdf8'; // var(--wave-color) equivalent
         ctx.lineWidth = 2;
         ctx.lineJoin = 'round';
 
         currentWaveformPoints.forEach((pt, index) => {
-            // Map x to pixel width
-            const pixelX = ((pt.x - xMin) / domainSpan) * w;
-            // Map normalized y to pixel height, flipped so positive is UP
-            const pixelY = (h / 2) - (pt.normalizedY * (h / 2) * 0.9); // 0.9 padding
+            const pixelX = ((pt.x - viewState.xMin) / viewSpanX) * w;
+            const pixelY = h - ((pt.y - viewState.yMin) / viewSpanY) * h;
 
             if (index === 0) {
                 ctx.moveTo(pixelX, pixelY);
@@ -225,8 +249,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 ctx.lineTo(pixelX, pixelY);
             }
         });
-        
         ctx.stroke();
+
+        // Draw active domains vertical bars
+        ctx.beginPath();
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.lineWidth = 2;
+        
+        if (startXPixel >= 0 && startXPixel <= w) {
+            ctx.moveTo(startXPixel, 0); 
+            ctx.lineTo(startXPixel, h);
+        }
+        if (endXPixel >= 0 && endXPixel <= w) {
+            ctx.moveTo(endXPixel, 0); 
+            ctx.lineTo(endXPixel, h);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        
+        if (isPlaying) updatePlayhead();
     }
 
     // --- Audio Synthesis ---
@@ -590,8 +632,142 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Move playhead
         const rect = canvas.getBoundingClientRect();
-        const pixelPosition = fraction * rect.width;
+        const activeXMin = parseFloat(xMinInput.value);
+        const activeXMax = parseFloat(xMaxInput.value);
+        const currentActiveX = activeXMin + fraction * (activeXMax - activeXMin);
+        const viewSpanX = viewState.xMax - viewState.xMin;
+        const pixelPosition = ((currentActiveX - viewState.xMin) / viewSpanX) * rect.width;
+        
         playhead.style.transform = `translateX(${pixelPosition}px)`;
+        if (pixelPosition >= 0 && pixelPosition <= rect.width) {
+            playhead.style.display = 'block';
+        } else {
+            playhead.style.display = 'none';
+        }
+    }
+
+    function requestRedraw() {
+        if (!isRedrawQueued) {
+            isRedrawQueued = true;
+            requestAnimationFrame(() => {
+                calculatePathPoints();
+                drawWaveform();
+                isRedrawQueued = false;
+            });
+        }
+    }
+
+    function setupCanvasInteractions() {
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const pX = mouseX / rect.width;
+            const viewSpanX = viewState.xMax - viewState.xMin;
+            const mathX = viewState.xMin + pX * viewSpanX;
+            
+            // Zoom factor
+            const zoomIn = e.deltaY < 0;
+            const factor = zoomIn ? 0.8 : 1.25;
+            const newSpanX = viewSpanX * factor;
+            
+            viewState.xMin = mathX - pX * newSpanX;
+            viewState.xMax = mathX + (1 - pX) * newSpanX;
+            requestRedraw();
+        }, { passive: false });
+
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            
+            const activeXMin = parseFloat(xMinInput.value);
+            const activeXMax = parseFloat(xMaxInput.value);
+            const viewSpanX = viewState.xMax - viewState.xMin;
+            
+            const startXPixel = ((activeXMin - viewState.xMin) / viewSpanX) * rect.width;
+            const endXPixel = ((activeXMax - viewState.xMin) / viewSpanX) * rect.width;
+            
+            const grabThreshold = 10;
+            if (Math.abs(mouseX - startXPixel) < grabThreshold) {
+                viewState.dragMode = 'drag-min';
+                document.body.style.cursor = 'ew-resize';
+            } else if (Math.abs(mouseX - endXPixel) < grabThreshold) {
+                viewState.dragMode = 'drag-max';
+                document.body.style.cursor = 'ew-resize';
+            } else {
+                viewState.dragMode = 'pan';
+                document.body.style.cursor = 'grabbing';
+            }
+            viewState.isDragging = true;
+            viewState.lastMouseX = e.clientX;
+            viewState.lastMouseY = e.clientY;
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!viewState.isDragging) {
+                const rect = canvas.getBoundingClientRect();
+                if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                    const mouseX = e.clientX - rect.left;
+                    const activeXMin = parseFloat(xMinInput.value);
+                    const activeXMax = parseFloat(xMaxInput.value);
+                    const viewSpanX = viewState.xMax - viewState.xMin;
+                    const startXPixel = ((activeXMin - viewState.xMin) / viewSpanX) * rect.width;
+                    const endXPixel = ((activeXMax - viewState.xMin) / viewSpanX) * rect.width;
+                    const grabThreshold = 10;
+                    if (Math.abs(mouseX - startXPixel) < grabThreshold || Math.abs(mouseX - endXPixel) < grabThreshold) {
+                        canvas.style.cursor = 'ew-resize';
+                    } else {
+                        canvas.style.cursor = 'grab';
+                    }
+                }
+                return;
+            }
+            
+            const dx = e.clientX - viewState.lastMouseX;
+            const dy = e.clientY - viewState.lastMouseY;
+            viewState.lastMouseX = e.clientX;
+            viewState.lastMouseY = e.clientY;
+            
+            const rect = canvas.getBoundingClientRect();
+            const viewSpanX = viewState.xMax - viewState.xMin;
+            const dxMath = (dx / rect.width) * viewSpanX;
+            
+            if (viewState.dragMode === 'pan') {
+                viewState.xMin -= dxMath;
+                viewState.xMax -= dxMath;
+                const viewSpanY = viewState.yMax - viewState.yMin;
+                const dyMath = (dy / rect.height) * viewSpanY;
+                viewState.yMin += dyMath; // Pixel Y is inverted 
+                viewState.yMax += dyMath;
+                requestRedraw();
+            } else if (viewState.dragMode === 'drag-min') {
+                let currentVal = parseFloat(xMinInput.value);
+                let newVal = currentVal + dxMath;
+                let maxVal = parseFloat(xMaxInput.value);
+                if (newVal >= maxVal - 0.1) newVal = maxVal - 0.1;
+                xMinInput.value = newVal.toFixed(2);
+                requestRedraw();
+            } else if (viewState.dragMode === 'drag-max') {
+                let currentVal = parseFloat(xMaxInput.value);
+                let newVal = currentVal + dxMath;
+                let minVal = parseFloat(xMinInput.value);
+                if (newVal <= minVal + 0.1) newVal = minVal + 0.1;
+                xMaxInput.value = newVal.toFixed(2);
+                requestRedraw();
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (viewState.isDragging) {
+                viewState.isDragging = false;
+                document.body.style.cursor = '';
+                canvas.style.cursor = 'grab';
+                if (viewState.dragMode !== 'pan') {
+                    parseAndDraw();
+                    if (isPlaying) updateAudioLive();
+                }
+            }
+        });
     }
 
     // Run
