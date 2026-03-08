@@ -280,12 +280,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // Apply a tiny fade-in and fade-out envelope directly to the buffer to prevent looping pops
-        // 5 milliseconds is usually enough to stop a pop without changing the sound character
-        const fadeSamples = Math.min(Math.floor(audioCtx.sampleRate * 0.005), Math.floor(frameCount / 4));
+        // Apply a smooth fade-in and fade-out envelope directly to the buffer to prevent looping pops
+        // 40 milliseconds with a cosine curve (Hann window style) provides a smooth transition without clicks
+        const fadeDuration = Math.min(0.04, duration / 4); // Max 40ms or 25% of duration
+        const fadeSamples = Math.floor(audioCtx.sampleRate * fadeDuration);
         
         for (let i = 0; i < fadeSamples; i++) {
-            const ratio = i / fadeSamples;
+            // Cosine taper from 0 to 1 smoothly
+            const ratio = 0.5 - 0.5 * Math.cos(Math.PI * (i / fadeSamples));
             // Fade-in front end
             channelData[i] *= ratio;
             // Fade-out back end
