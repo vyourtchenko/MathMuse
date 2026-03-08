@@ -158,6 +158,17 @@ math-field {
     color: var(--text-main);
     border: none;
     outline: none;
+    
+    /* MathLive Selection Overrides */
+    --selection-background-color: rgba(99, 102, 241, 0.4); 
+    --selection-color: var(--text-main);
+    
+    /* Fix for when editing INSIDE a function like \sin() */
+    --contains-highlight-background-color: rgba(255, 255, 255, 0.05);
+}
+math-field::part(selection) {
+    background-color: rgba(99, 102, 241, 0.4) !important;
+    color: var(--text-main) !important;
 }
 math-field::part(virtual-keyboard-toggle) {
     color: var(--text-muted);
