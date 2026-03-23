@@ -42,6 +42,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const variablesContainer = document.getElementById('variables-container');
     let customVariables = {}; // e.g. { a: 1, b: 2 }
     
+    // Piano Mode State
+    const btnPianoMode = document.getElementById('btn-piano-mode');
+    const pianoInstructions = document.getElementById('piano-instructions');
+    let isPianoMode = false;
+    let pianoBuffer = null;
+    let activeNotes = {};
+    const KEY_TO_SEMITONE = {
+        'KeyA': 0, 'KeyW': 1, 'KeyS': 2, 'KeyE': 3, 'KeyD': 4, 'KeyF': 5, 'KeyT': 6, 'KeyG': 7, 'KeyY': 8, 'KeyH': 9, 'KeyU': 10, 'KeyJ': 11, 'KeyK': 12, 'KeyO': 13, 'KeyL': 14, 'KeyP': 15, 'Semicolon': 16, 'Quote': 17
+    };
+    
     // Last successfully compiled math function
     let compiledMath = null;
     // Current rendered shape points
@@ -144,8 +154,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 xMaxInput.value = viewState.xMax.toFixed(2);
                 parseAndDraw();
                 if (isPlaying) updateAudioLive();
+                else if (isPianoMode) generateAudioBuffer().then(b => pianoBuffer = b);
             });
         }
+
+        if (btnPianoMode) {
+            btnPianoMode.addEventListener('click', togglePianoMode);
+        }
+        
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
 
         // Add a slight delay to ensure everything is parsed initially
         setTimeout(() => {
@@ -190,6 +208,10 @@ document.addEventListener('DOMContentLoaded', () => {
             
             calculatePathPoints();
             drawWaveform();
+            
+            if (isPianoMode && !isPlaying) {
+                 generateAudioBuffer().then(b => pianoBuffer = b);
+            }
         } catch (e) {
             console.error("Math Parsing Error: ", e);
             errorMsg.textContent = "Invalid mathematical expression.";
@@ -512,6 +534,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     lastAudioUpdate = now;
                     updateAudioLive(); // Throttled real-time updates while animating
                 }
+            } else if (isPianoMode) {
+                const now = performance.now();
+                if (now - lastAudioUpdate > 100) {
+                    lastAudioUpdate = now;
+                    generateAudioBuffer().then(b => pianoBuffer = b);
+                }
             }
         }
 
@@ -641,6 +669,12 @@ document.addEventListener('DOMContentLoaded', () => {
                             lastAudioUpdate = now;
                             updateAudioLive();
                         }
+                    } else if (isPianoMode) {
+                        const now = performance.now();
+                        if (now - lastAudioUpdate > 100) {
+                            lastAudioUpdate = now;
+                            generateAudioBuffer().then(b => pianoBuffer = b);
+                        }
                     }
                 }
             };
@@ -690,6 +724,97 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // --- Piano Mode Functions ---
+    async function togglePianoMode() {
+        isPianoMode = !isPianoMode;
+        if (isPianoMode) {
+            if (isPlaying) stopAudio(); // Stop normal playback
+            btnPianoMode.classList.add('active');
+            btnPianoMode.innerHTML = '<i class="ph-fill ph-piano-keys"></i> Exit Piano Mode';
+            pianoInstructions.style.display = 'block';
+            
+            btnPianoMode.style.opacity = '0.5';
+            pianoBuffer = await generateAudioBuffer();
+            btnPianoMode.style.opacity = '1';
+        } else {
+            btnPianoMode.classList.remove('active');
+            btnPianoMode.innerHTML = '<i class="ph-fill ph-piano-keys"></i> Piano Mode';
+            pianoInstructions.style.display = 'none';
+            releaseAllNotes();
+            pianoBuffer = null;
+        }
+    }
+
+    function handleKeyDown(e) {
+        if (!isPianoMode || !pianoBuffer || e.repeat) return;
+        
+        const activeTag = document.activeElement.tagName.toLowerCase();
+        if (activeTag === 'input' || activeTag === 'textarea' || document.activeElement.closest('math-field')) return;
+
+        const semitone = KEY_TO_SEMITONE[e.code];
+        if (semitone !== undefined) {
+            playNote(e.code, semitone);
+        }
+    }
+
+    function handleKeyUp(e) {
+        if (!isPianoMode) return;
+        releaseNote(e.code);
+    }
+    
+    function playNote(keyCode, semitone) {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        
+        if (activeNotes[keyCode]) {
+            releaseNote(keyCode); // Quick release old if key stuck
+        }
+
+        const source = audioCtx.createBufferSource();
+        source.buffer = pianoBuffer;
+        source.loop = true;
+        
+        source.playbackRate.value = Math.pow(2, semitone / 12);
+
+        const envGain = audioCtx.createGain();
+        envGain.gain.setValueAtTime(0, audioCtx.currentTime);
+        envGain.gain.linearRampToValueAtTime(1, audioCtx.currentTime + 0.05);
+
+        source.connect(envGain);
+        if (!gainNode) {
+            gainNode = audioCtx.createGain();
+            gainNode.connect(audioCtx.destination);
+        }
+        envGain.connect(gainNode);
+
+        source.start();
+        activeNotes[keyCode] = { source, envGain };
+    }
+
+    function releaseNote(keyCode) {
+        const note = activeNotes[keyCode];
+        if (note) {
+            const now = audioCtx.currentTime;
+            note.envGain.gain.cancelScheduledValues(now);
+            note.envGain.gain.setValueAtTime(note.envGain.gain.value, now);
+            note.envGain.gain.linearRampToValueAtTime(0, now + 0.1);
+            
+            note.source.stop(now + 0.15);
+            
+            setTimeout(() => {
+                try { note.source.disconnect(); note.envGain.disconnect(); } catch(e){}
+            }, 200);
+            
+            delete activeNotes[keyCode];
+        }
+    }
+
+    function releaseAllNotes() {
+        for (const code in activeNotes) {
+            releaseNote(code);
+        }
+    }
+
     function toggleLoop() {
         isLooping = !isLooping;
         if (isLooping) {
@@ -703,6 +828,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function togglePlayback() {
+        if (isPianoMode) return;
         if (isPlaying) {
             stopAudio();
         } else {
