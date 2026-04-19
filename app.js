@@ -559,20 +559,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    let varAnimFrameId = null;
+    let isFrameRequested = false;
     let lastVarAnimTime = 0;
     let lastAudioUpdate = 0;
 
     function ensureAnimationLoop() {
-        if (!varAnimFrameId) {
+        if (!isFrameRequested) {
+            isFrameRequested = true;
             lastVarAnimTime = performance.now();
-            varAnimFrameId = requestAnimationFrame(variableAnimationLoop);
+            requestAnimationFrame(variableAnimationLoop);
         }
     }
 
+
+
     function variableAnimationLoop(timestamp) {
+        isFrameRequested = false;
         const delta = (timestamp - lastVarAnimTime) / 1000;
         lastVarAnimTime = timestamp;
+
         
         let anyAnimating = false;
         let anyChanged = false;
@@ -613,6 +618,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         anyChanged = true;
                     } else {
                         config.isAnimating = false;
+                        anyChanged = true;
                     }
                 }
             }
@@ -622,18 +628,26 @@ document.addEventListener('DOMContentLoaded', () => {
             const inputs = variablesContainer.querySelectorAll('.variable-control-group');
             let idx = 0;
             for (const [symbol, config] of Object.entries(customVariables)) {
-                if (config.isAnimating || (!config.isAnimating && inputs[idx])) {
-                    const group = inputs[idx];
-                    const numInput = group?.querySelector('.variable-number-input');
-                    const slider = group?.querySelector('.variable-slider');
-                    const btn = group?.querySelector('.btn-play-var');
+                const group = inputs[idx];
+                if (group) {
+                    const numInput = group.querySelector('.variable-number-input');
+                    const slider = group.querySelector('.variable-slider');
+                    const btn = group.querySelector('.btn-play-var');
                     if (numInput && slider) {
                         numInput.value = config.value.toFixed(2);
                         slider.value = config.value;
                     }
-                    if (btn && !config.isAnimating) {
-                        btn.classList.remove('playing');
-                        btn.innerHTML = '<i class="ph-fill ph-play"></i>';
+                    // Only touch the button when its rendered state actually disagrees
+                    // with config.isAnimating. Rewriting innerHTML every frame destroys
+                    // the <i> child; if a user's mousedown on this button lands on an
+                    // <i> that gets replaced before mouseup, the click has no common
+                    // ancestor and the browser drops it — which is why clicking the
+                    // second variable's play button fails while the first is animating.
+                    if (btn && btn.classList.contains('playing') !== config.isAnimating) {
+                        btn.classList.toggle('playing', config.isAnimating);
+                        btn.innerHTML = config.isAnimating
+                            ? '<i class="ph-fill ph-pause"></i>'
+                            : '<i class="ph-fill ph-play"></i>';
                     }
                 }
                 idx++;
@@ -656,11 +670,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (anyAnimating) {
-            varAnimFrameId = requestAnimationFrame(variableAnimationLoop);
-        } else {
-            varAnimFrameId = null;
+            isFrameRequested = true;
+            requestAnimationFrame(variableAnimationLoop);
         }
     }
+
 
     function renderVariableSliders() {
         if (Object.keys(customVariables).length === 0) {
