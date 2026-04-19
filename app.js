@@ -428,16 +428,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (const symbol of newSymbols) {
             if (customVariables[symbol] === undefined) {
-                customVariables[symbol] = { 
-                    value: 1, 
-                    min: -10, 
-                    max: 10, 
-                    step: 0.1, 
-                    mode: 'oscillate', 
-                    speed: 1, 
-                    isAnimating: false, 
-                    direction: 1 
-                };
+                if (symbol === 'a' || symbol === 'b') {
+                    // Assign requested defaults, assuming 'a' and 'b' if using \sin(a*x)+\cos(b*x)
+                    const defaultVal = symbol === 'a' ? 779.30 : 764.00;
+                    customVariables[symbol] = { 
+                        value: defaultVal, 
+                        min: -10, 
+                        max: 1000, 
+                        step: 0.01, 
+                        mode: 'oscillate', 
+                        speed: 1, 
+                        isAnimating: false, 
+                        direction: 1 
+                    };
+                } else if (symbol === 'c') {
+                    // Also support 'b' and 'c' if user requested \sin(b*x)+\cos(c*x) implicitly based on prompt text
+                    customVariables[symbol] = { 
+                        value: 764.00, 
+                        min: -10, 
+                        max: 1000, 
+                        step: 0.01, 
+                        mode: 'oscillate', 
+                        speed: 1, 
+                        isAnimating: false, 
+                        direction: 1 
+                    };
+                } else {
+                    customVariables[symbol] = { 
+                        value: 1, 
+                        min: -10, 
+                        max: 10, 
+                        step: 0.1, 
+                        mode: 'oscillate', 
+                        speed: 1, 
+                        isAnimating: false, 
+                        direction: 1 
+                    };
+                }
                 changed = true;
             }
         }
