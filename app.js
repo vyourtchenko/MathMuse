@@ -165,6 +165,8 @@ document.addEventListener('DOMContentLoaded', () => {
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('keyup', handleKeyUp);
 
+        setupPianoPointerInput();
+
         const btnDownloadWav = document.getElementById('btn-download-wav');
         if (btnDownloadWav) {
             btnDownloadWav.addEventListener('click', downloadWav);
@@ -884,6 +886,56 @@ document.addEventListener('DOMContentLoaded', () => {
             releaseAllNotes();
             pianoBuffer = null;
         }
+    }
+
+    function setupPianoPointerInput() {
+        const pianoContainer = document.getElementById('piano-visual-container');
+        if (!pianoContainer) return;
+
+        // pointerId -> { keyEl, noteId } for pointers currently pressing a key.
+        // Keying note IDs by pointerId (not by data-key) lets independent fingers
+        // on different keys release independently, and keeps pointer-triggered
+        // notes from colliding with keyboard-triggered ones keyed by KeyboardEvent.code.
+        const pointerNotes = new Map();
+
+        const startNote = (keyEl, pointerId) => {
+            const keyCode = keyEl.getAttribute('data-key');
+            const semitone = KEY_TO_SEMITONE[keyCode];
+            if (semitone === undefined) return;
+
+            const noteId = `pointer:${pointerId}`;
+            playNote(noteId, semitone);
+            pointerNotes.set(pointerId, { keyEl, noteId });
+            keyEl.classList.add('active');
+
+            const multiplier = Math.pow(2, semitone / 12);
+            document.getElementById('piano-telemetry-mult').textContent = `Pitch Multiplier: ${multiplier.toFixed(2)} x`;
+        };
+
+        const endNote = (pointerId) => {
+            const info = pointerNotes.get(pointerId);
+            if (!info) return;
+            releaseNote(info.noteId);
+            info.keyEl.classList.remove('active');
+            pointerNotes.delete(pointerId);
+        };
+
+        pianoContainer.querySelectorAll('.piano-key').forEach(keyEl => {
+            keyEl.addEventListener('pointerdown', (e) => {
+                if (!isPianoMode || !pianoBuffer) return;
+                // preventDefault suppresses the synthetic mouse/click that follows
+                // a touch, and (together with touch-action: none in CSS) stops the
+                // browser from claiming the gesture for scroll/zoom on mobile.
+                e.preventDefault();
+                startNote(keyEl, e.pointerId);
+                // Capture so a pointerup outside the key (finger slid off) still
+                // reaches this element — otherwise the note would get stuck.
+                try { keyEl.setPointerCapture(e.pointerId); } catch (_) {}
+            });
+
+            keyEl.addEventListener('pointerup', (e) => endNote(e.pointerId));
+            keyEl.addEventListener('pointercancel', (e) => endNote(e.pointerId));
+        });
     }
 
     function handleKeyDown(e) {

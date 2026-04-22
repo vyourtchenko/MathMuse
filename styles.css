@@ -589,8 +589,12 @@ button {
 
 .piano-key {
     transition: background 0.1s, box-shadow 0.1s;
-    cursor: default;
+    cursor: pointer;
     user-select: none;
+    /* touch-action: none routes mobile touches to pointer events instead of
+       letting the browser interpret them as scroll/zoom gestures. */
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .piano-key.white-key {
