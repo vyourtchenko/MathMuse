@@ -197,12 +197,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Parser & Logic ---
+
+    // MathLive emits ascii-math like `d(sin (a * x)+...)` when the user wraps
+    // a sub-expression in parens and prefixes a variable — note the missing
+    // space between `d` and `(`. mathjs reads that as a function call to `d`
+    // and the expression fails. Known function names get a space (`sin (…)`),
+    // so we only need to inject `*` where an unknown identifier sits flush
+    // against `(`.
+    function injectImplicitMultiplication(asciiMath) {
+        return asciiMath.replace(/\b([a-zA-Z_]\w*)\(/g, (match, name) => {
+            return typeof math[name] === 'function' ? match : `${name}*(`;
+        });
+    }
+
     function parseAndDraw() {
         if (!mathField || typeof mathField.getValue !== 'function') return;
-        
+
         errorMsg.textContent = '';
-        const asciiMath = mathField.getValue('ascii-math');
-        
+        const asciiMath = injectImplicitMultiplication(mathField.getValue('ascii-math'));
+
         try {
             const node = math.parse(asciiMath);
             compiledMath = node.compile();
