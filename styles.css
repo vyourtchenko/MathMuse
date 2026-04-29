@@ -613,7 +613,7 @@ button {
 
 .piano-telemetry {
     display: flex;
-    justify-content: flex-start;
+    align-items: center;
     gap: 2rem;
     padding: 0.5rem 1rem;
     font-family: 'Outfit', sans-serif;
@@ -621,6 +621,34 @@ button {
     font-size: 1rem;
     font-weight: 600;
     border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.btn-piano-dynamic {
+    margin-left: auto;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+    border: 1px solid var(--panel-border);
+    border-radius: 50px;
+    padding: 0.25rem 0.85rem;
+    font-size: 0.85rem;
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    transition: all 0.2s;
+}
+
+.btn-piano-dynamic:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-main);
+}
+
+.btn-piano-dynamic.dynamic {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(236, 72, 153, 0.1);
 }
 
 .piano-keyboard-ui {

@@ -48,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isPianoMode = false;
     let pianoBuffer = null;
     let activeNotes = {};
+    let pianoDynamicMode = false;
     const KEY_TO_SEMITONE = {
         'KeyA': 0, 'KeyW': 1, 'KeyS': 2, 'KeyE': 3, 'KeyD': 4, 'KeyF': 5, 'KeyT': 6, 'KeyG': 7, 'KeyY': 8, 'KeyH': 9, 'KeyU': 10, 'KeyJ': 11, 'KeyK': 12, 'KeyO': 13, 'KeyL': 14, 'KeyP': 15, 'Semicolon': 16, 'Quote': 17
     };
@@ -154,12 +155,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 xMaxInput.value = viewState.xMax.toFixed(2);
                 parseAndDraw();
                 if (isPlaying) updateAudioLive();
-                else if (isPianoMode) generateAudioBuffer().then(b => pianoBuffer = b);
+                else if (isPianoMode) updatePianoBuffer();
             });
         }
 
         if (btnPianoMode) {
             btnPianoMode.addEventListener('click', togglePianoMode);
+        }
+
+        const btnPianoDynamic = document.getElementById('btn-piano-dynamic');
+        if (btnPianoDynamic) {
+            btnPianoDynamic.addEventListener('click', () => {
+                pianoDynamicMode = !pianoDynamicMode;
+                if (pianoDynamicMode) {
+                    btnPianoDynamic.classList.add('dynamic');
+                    btnPianoDynamic.innerHTML = '<i class="ph ph-link"></i> Dynamic';
+                    btnPianoDynamic.title = 'Dynamic: notes update live with variable changes';
+                } else {
+                    btnPianoDynamic.classList.remove('dynamic');
+                    btnPianoDynamic.innerHTML = '<i class="ph ph-snowflake"></i> Frozen';
+                    btnPianoDynamic.title = 'Frozen: notes play the waveform captured at key-press time';
+                }
+            });
         }
         
         window.addEventListener('keydown', handleKeyDown);
@@ -231,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
             drawWaveform();
             
             if (isPianoMode && !isPlaying) {
-                 generateAudioBuffer().then(b => pianoBuffer = b);
+                updatePianoBuffer();
             }
         } catch (e) {
             console.error("Math Parsing Error: ", e);
@@ -680,7 +697,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const now = performance.now();
                 if (now - lastAudioUpdate > 100) {
                     lastAudioUpdate = now;
-                    generateAudioBuffer().then(b => pianoBuffer = b);
+                    updatePianoBuffer();
                 }
             }
         }
@@ -815,7 +832,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const now = performance.now();
                         if (now - lastAudioUpdate > 100) {
                             lastAudioUpdate = now;
-                            generateAudioBuffer().then(b => pianoBuffer = b);
+                            updatePianoBuffer();
                         }
                     }
                 }
@@ -1019,7 +1036,7 @@ document.addEventListener('DOMContentLoaded', () => {
         envGain.connect(gainNode);
 
         source.start();
-        activeNotes[keyCode] = { source, envGain };
+        activeNotes[keyCode] = { source, envGain, semitone };
     }
 
     function releaseNote(keyCode) {
@@ -1037,6 +1054,47 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 200);
             
             delete activeNotes[keyCode];
+        }
+    }
+
+    async function updatePianoBuffer() {
+        const newBuffer = await generateAudioBuffer();
+        pianoBuffer = newBuffer;
+        if (pianoDynamicMode && Object.keys(activeNotes).length > 0) {
+            refreshActiveNotes();
+        }
+    }
+
+    function refreshActiveNotes() {
+        if (!audioCtx || !pianoBuffer) return;
+        const XFADE = 0.02;
+        const now = audioCtx.currentTime;
+
+        for (const keyCode in activeNotes) {
+            const note = activeNotes[keyCode];
+            const { semitone } = note;
+
+            const newSource = audioCtx.createBufferSource();
+            newSource.buffer = pianoBuffer;
+            newSource.loop = true;
+            newSource.playbackRate.value = Math.pow(2, semitone / 12);
+
+            const newEnvGain = audioCtx.createGain();
+            newEnvGain.gain.setValueAtTime(0, now);
+            newEnvGain.gain.linearRampToValueAtTime(1, now + XFADE);
+            newSource.connect(newEnvGain);
+            newEnvGain.connect(gainNode);
+            newSource.start();
+
+            note.envGain.gain.cancelScheduledValues(now);
+            note.envGain.gain.setValueAtTime(note.envGain.gain.value, now);
+            note.envGain.gain.linearRampToValueAtTime(0, now + XFADE);
+            note.source.stop(now + XFADE + 0.01);
+            setTimeout(() => {
+                try { note.source.disconnect(); note.envGain.disconnect(); } catch (_) {}
+            }, (XFADE + 0.05) * 1000);
+
+            activeNotes[keyCode] = { source: newSource, envGain: newEnvGain, semitone };
         }
     }
 
